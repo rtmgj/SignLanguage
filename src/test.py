@@ -1,39 +1,62 @@
 from data import DETRData
 from model import DETR
 import torch
-from torch import nn, optim, load, save
+from torch import load
 from torch.utils.data import DataLoader 
 from matplotlib import pyplot as plt 
-from utils.boxes import box_cxcywh_to_xyxy, rescale_bboxes
+from utils.boxes import rescale_bboxes
+from utils.setup import get_classes
+from utils.logger import get_logger
+from utils.rich_handlers import TestHandler, DetectionHandler
+
+# Initialize loggers and handlers
+logger = get_logger("test")
+test_handler = TestHandler()
+detection_handler = DetectionHandler()
+
+logger.print_banner()
 
 num_classes = 3
 test_dataset = DETRData('data/test', train=False) 
-test_dataloader = DataLoader(test_dataset, batch_size=4, drop_last=True) 
+test_dataloader = DataLoader(test_dataset, shuffle=True, batch_size=4, drop_last=True) 
 model = DETR(num_classes=num_classes)
 model.eval()
-model.load_state_dict(load('checkpoints/301_model.pt'))
+model.load_pretrained('checkpoints/99_model.pt')
 
 X, y = next(iter(test_dataloader))
 
+logger.test("Running inference on test batch...")
+
+import time
+start_time = time.time()
 result = model(X) 
-# print(result) 
-# print(result['pred_logits'].shape) 
-# print(result['pred_boxes'].shape) 
+inference_time = (time.time() - start_time) * 1000  # Convert to ms
 
 probabilities = result['pred_logits'].softmax(-1)[:,:,:-1] 
 max_probs, max_classes = probabilities.max(-1)
-keep_mask = max_probs > 0.10
+keep_mask = max_probs > 0.95
 batch_indices, query_indices = torch.where(keep_mask) 
 
 bboxes = rescale_bboxes(result['pred_boxes'][batch_indices, query_indices,:], (224,224))
 classes = max_classes[batch_indices, query_indices]
 probas = max_probs[batch_indices, query_indices]
-print(batch_indices, query_indices)
-print(classes)
-print(probas)
-print(bboxes) 
 
-CLASSES = ['hello', 'iloveyou', 'thankyou', 'noclass']     
+# Log inference timing
+detection_handler.log_inference_time(inference_time)
+
+# Prepare detection results for logging
+detections = []
+for i in range(len(classes)):
+    detections.append({
+        'class': get_classes()[classes[i].item()],
+        'confidence': probas[i].item(),
+        'bbox': bboxes[i].detach().numpy().tolist()
+    })
+
+# Log detection results
+detection_handler.log_detections(detections) 
+
+CLASSES = get_classes()
 
 fig, ax = plt.subplots(2,2) 
 axs = ax.flatten()

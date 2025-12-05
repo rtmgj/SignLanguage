@@ -12,5 +12,17 @@ detrtest.py
 realtimeimage.py
 data/archive
 
+# data
 checkpoints
-data
+# macOS system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+LossAnalysis.ipynb
+.ipynb_checkpoints
+archive
+example_loggers

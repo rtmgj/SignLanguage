@@ -3,19 +3,11 @@ from torch import nn
 from torchvision.models import resnet50, ResNet50_Weights
 import sys 
 from colorama import Fore 
-from einops.layers.torch import Rearrange
+from utils.logger import get_logger
+from utils.rich_handlers import ModelHandler
 from torchinfo import summary
 import sys 
 import math
-
-
-def pos_encoding(seq_length, dim_size):
-    p = torch.zeros((seq_length, dim_size))
-    for k in range(seq_length):
-        for i in range(int(dim_size / 2)):
-            p[k, 2 * i] = torch.sin(torch.tensor(k / (10000 ** (2 * i / dim_size))))
-            p[k, 2 * i + 1] = torch.cos(torch.tensor(k / (10000 ** (2 * i / dim_size))))
-    return p
 
 
 def _get_1d_sincos_pos_embed(length: int, dim: int, temperature: float = 10000.0, device=None):
@@ -47,20 +39,26 @@ def build_2d_sincos_position_embedding(height: int, width: int, dim: int, device
 
 
 class DETR(nn.Module):
-    """
-    Demo DETR implementation.
-
-    Demo implementation of DETR in minimal number of lines, with the
-    following differences wrt DETR in the paper:
-    * learned positional encoding (instead of sine)
-    * positional encoding is passed at input (instead of attention)
-    * fc bbox predictor (instead of MLP)
-    The model achieves ~40 AP on COCO val5k and runs at ~28 FPS on Tesla V100.
-    Only batch size 1 supported.
-    """
     def __init__(self, num_classes, hidden_dim=256, nheads=8,
-                 num_encoder_layers=2, num_decoder_layers=2, num_queries=10):
+                 num_encoder_layers=1, num_decoder_layers=1, num_queries=25):
         super().__init__()
+        
+        # Initialize logger and model handler
+        self.logger = get_logger("model")
+        self.model_handler = ModelHandler()
+        
+        # Log model configuration
+        model_config = {
+            "Model Type": "DETR (Detection Transformer)",
+            "Number of Classes": num_classes,
+            "Hidden Dimension": hidden_dim,
+            "Attention Heads": nheads,
+            "Encoder Layers": num_encoder_layers,
+            "Decoder Layers": num_decoder_layers,
+            "Object Queries": num_queries,
+            "Backbone": "ResNet-50 (ImageNet pretrained)"
+        }
+        self.model_handler.log_model_architecture(model_config)
 
         # create ResNet-50 backbone
         self.backbone = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
@@ -89,7 +87,6 @@ class DETR(nn.Module):
 
     def forward(self, inputs):
         # propagate inputs through ResNet-50 up to avg-pool layer
-        b, c, H_in, W_in = inputs.shape
         x = self.backbone.conv1(inputs)
         x = self.backbone.bn1(x)
         x = self.backbone.relu(x)
@@ -122,6 +119,21 @@ class DETR(nn.Module):
             'pred_logits': self.linear_class(hs),
             'pred_boxes': self.linear_bbox(hs).sigmoid()
         }
+    
+    def log_model_info(self):
+        """Log model parameter information."""
+        total_params = sum(p.numel() for p in self.parameters())
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        self.model_handler.log_parameters_count(total_params, trainable_params)
+        
+    def load_pretrained(self, checkpoint_path: str):
+        """Load pretrained weights with logging."""
+        try:
+            self.load_state_dict(torch.load(checkpoint_path))
+            self.model_handler.log_model_loading(checkpoint_path, success=True)
+        except Exception as e:
+            self.logger.error(f"Failed to load checkpoint: {str(e)}")
+            self.model_handler.log_model_loading(checkpoint_path, success=False)
 
 
 if __name__ == '__main__': 
